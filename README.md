@@ -1,4 +1,4 @@
-# 2048 AI Solver 🤖🎮
+# 2048 AI Solver 
 
 Một dự án trò chơi 2048 tích hợp Trí tuệ nhân tạo (AI), được phát triển bằng ngôn ngữ Python và thư viện Pygame. Dự án này minh họa cách áp dụng các thuật toán tìm kiếm đối kháng kinh điển để giúp máy tính tự động đưa ra các quyết định tối ưu và giành điểm số cao trong trò chơi 2048.
 
