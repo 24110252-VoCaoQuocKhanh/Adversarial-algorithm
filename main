@@ -1,0 +1,423 @@
+import pygame
+import random
+import copy
+import math
+
+WIDTH, HEIGHT = 1050, 480
+BOARD_SIZE = 4
+TILE_SIZE = 90
+MARGIN = 10
+MOVE_NAMES = ['Left', 'Right', 'Up', 'Down']
+
+COLORS = {
+    'bg': '#faf8ef', 'grid_bg': '#bbada0', 'empty': '#cdc1b4',
+    'text_dark': '#776e65', 'text_light': '#f9f6f2',
+    'panel_bg': '#e6dfd5',
+    2: '#eee4da', 4: '#ede0c8', 8: '#f2b179', 16: '#f59563',
+    32: '#f67c5f', 64: '#f65e3b', 128: '#edcf72', 256: '#edcc61',
+    512: '#edc850', 1024: '#edc53f', 2048: '#edc22e'
+}
+
+class Game2048:
+    def __init__(self):
+        self.board = [[0] * BOARD_SIZE for _ in range(BOARD_SIZE)]
+        self.score = 0
+        self.add_new_tile()
+        self.add_new_tile()
+
+    def add_new_tile(self):
+        empty_cells = [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE) if self.board[r][c] == 0]
+        if empty_cells:
+            r, c = random.choice(empty_cells)
+            self.board[r][c] = 4 if random.random() < 0.1 else 2
+
+    def compress(self, board):
+        new_board = [[0] * BOARD_SIZE for _ in range(BOARD_SIZE)]
+        for r in range(BOARD_SIZE):
+            pos = 0
+            for c in range(BOARD_SIZE):
+                if board[r][c] != 0:
+                    new_board[r][pos] = board[r][c]
+                    pos += 1
+        return new_board
+
+    def merge(self, board):
+        score = 0
+        for r in range(BOARD_SIZE):
+            for c in range(BOARD_SIZE - 1):
+                if board[r][c] == board[r][c + 1] and board[r][c] != 0:
+                    board[r][c] *= 2
+                    board[r][c + 1] = 0
+                    score += board[r][c]
+        return board, score
+
+    def reverse(self, board):
+        return [row[::-1] for row in board]
+
+    def transpose(self, board):
+        return [[board[c][r] for c in range(BOARD_SIZE)] for r in range(BOARD_SIZE)]
+
+    def move(self, dir_idx, current_board=None):
+        board = current_board if current_board else self.board
+        temp_board = copy.deepcopy(board)
+        score = 0
+
+        if dir_idx == 0:
+            temp_board = self.compress(temp_board)
+            temp_board, s = self.merge(temp_board)
+            temp_board = self.compress(temp_board)
+        elif dir_idx == 1:
+            temp_board = self.reverse(temp_board)
+            temp_board = self.compress(temp_board)
+            temp_board, s = self.merge(temp_board)
+            temp_board = self.compress(temp_board)
+            temp_board = self.reverse(temp_board)
+        elif dir_idx == 2:
+            temp_board = self.transpose(temp_board)
+            temp_board = self.compress(temp_board)
+            temp_board, s = self.merge(temp_board)
+            temp_board = self.compress(temp_board)
+            temp_board = self.transpose(temp_board)
+        elif dir_idx == 3:
+            temp_board = self.transpose(temp_board)
+            temp_board = self.reverse(temp_board)
+            temp_board = self.compress(temp_board)
+            temp_board, s = self.merge(temp_board)
+            temp_board = self.compress(temp_board)
+            temp_board = self.reverse(temp_board)
+            temp_board = self.transpose(temp_board)
+
+        score += s
+        changed = temp_board != board
+        
+        if current_board is None:
+            if changed:
+                self.board = temp_board
+                self.score += score
+                self.add_new_tile()
+            return changed
+        return temp_board, changed, score
+
+    def get_available_moves(self, board):
+        moves = []
+        for i in range(4):
+            _, changed, _ = self.move(i, board)
+            if changed: moves.append(i)
+        return moves
+
+class AI2048:
+    def __init__(self):
+        self.weights = [
+            [2**15, 2**14, 2**13, 2**12],
+            [2**8,  2**9,  2**10, 2**11],
+            [2**7,  2**6,  2**5,  2**4],
+            [2**0,  2**1,  2**2,  2**3]
+        ]
+        self.DEPTH = 3
+        self.nodes_evaluated = 0
+        self.move_scores = {}
+        self.chosen_move = -1
+        self.current_algo = ""
+
+    def evaluate(self, board):
+        score = 0
+        empty_cells = 0
+        for r in range(BOARD_SIZE):
+            for c in range(BOARD_SIZE):
+                score += board[r][c] * self.weights[r][c]
+                if board[r][c] == 0:
+                    empty_cells += 1
+        return score + (empty_cells * 10000)
+
+    def minimax(self, game, board, depth, is_maximizing):
+        self.nodes_evaluated += 1
+        if depth == 0:
+            return self.evaluate(board), -1
+
+        if is_maximizing:
+            best_score = -math.inf
+            best_move = -1
+            moves = game.get_available_moves(board)
+            if not moves: return self.evaluate(board), -1
+
+            for move in moves:
+                new_board, _, _ = game.move(move, board)
+                score, _ = self.minimax(game, new_board, depth - 1, False)
+                if depth == self.DEPTH:
+                    self.move_scores[MOVE_NAMES[move]] = score
+                if score > best_score:
+                    best_score = score
+                    best_move = move
+            return best_score, best_move
+        else:
+            best_score = math.inf
+            empty_cells = [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE) if board[r][c] == 0]
+            if not empty_cells: return self.evaluate(board), -1
+
+            for r, c in empty_cells:
+                for val in [2, 4]:
+                    new_board = copy.deepcopy(board)
+                    new_board[r][c] = val
+                    score, _ = self.minimax(game, new_board, depth - 1, True)
+                    if score < best_score:
+                        best_score = score
+            return best_score, -1
+
+    def alpha_beta(self, game, board, depth, alpha, beta, is_maximizing):
+        self.nodes_evaluated += 1
+        if depth == 0:
+            return self.evaluate(board), -1
+
+        if is_maximizing:
+            best_score = -math.inf
+            best_move = -1
+            moves = game.get_available_moves(board)
+            if not moves: return self.evaluate(board), -1
+
+            for move in moves:
+                new_board, _, _ = game.move(move, board)
+                score, _ = self.alpha_beta(game, new_board, depth - 1, alpha, beta, False)
+                if depth == self.DEPTH:
+                    self.move_scores[MOVE_NAMES[move]] = score
+                if score > best_score:
+                    best_score = score
+                    best_move = move
+                alpha = max(alpha, best_score)
+                if beta <= alpha: break
+            return best_score, best_move
+        else:
+            best_score = math.inf
+            empty_cells = [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE) if board[r][c] == 0]
+            if not empty_cells: return self.evaluate(board), -1
+
+            for r, c in empty_cells:
+                for val in [2, 4]:
+                    new_board = copy.deepcopy(board)
+                    new_board[r][c] = val
+                    score, _ = self.alpha_beta(game, new_board, depth - 1, alpha, beta, True)
+                    if score < best_score:
+                        best_score = score
+                    beta = min(beta, best_score)
+                    if beta <= alpha: break
+            return best_score, -1
+
+    def expectimax(self, game, board, depth, is_maximizing):
+        self.nodes_evaluated += 1
+        if depth == 0:
+            return self.evaluate(board), -1
+
+        if is_maximizing:
+            best_score = -math.inf
+            best_move = -1
+            moves = game.get_available_moves(board)
+            if not moves: return self.evaluate(board), -1
+
+            for move in moves:
+                new_board, _, _ = game.move(move, board)
+                score, _ = self.expectimax(game, new_board, depth - 1, False)
+                if depth == self.DEPTH:
+                    self.move_scores[MOVE_NAMES[move]] = score
+                if score > best_score:
+                    best_score = score
+                    best_move = move
+            return best_score, best_move
+        else:
+            expected_score = 0
+            empty_cells = [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE) if board[r][c] == 0]
+            if not empty_cells: return self.evaluate(board), -1
+
+            prob = 1.0 / len(empty_cells)
+            for r, c in empty_cells:
+                for val, p_val in [(2, 0.9), (4, 0.1)]:
+                    new_board = copy.deepcopy(board)
+                    new_board[r][c] = val
+                    score, _ = self.expectimax(game, new_board, depth - 1, True)
+                    expected_score += score * prob * p_val
+            return expected_score, -1
+
+def draw_board(surface, game, font):
+    pygame.draw.rect(surface, pygame.Color(COLORS['grid_bg']), (MARGIN, MARGIN, 410, 410), border_radius=10)
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            val = game.board[r][c]
+            x = MARGIN + c * (TILE_SIZE + MARGIN) + MARGIN
+            y = MARGIN + r * (TILE_SIZE + MARGIN) + MARGIN
+            
+            color = COLORS.get(val, COLORS[2048]) if val != 0 else COLORS['empty']
+            pygame.draw.rect(surface, pygame.Color(color), (x, y, TILE_SIZE, TILE_SIZE), border_radius=5)
+            
+            if val != 0:
+                text_color = COLORS['text_dark'] if val <= 4 else COLORS['text_light']
+                text = font.render(str(val), True, pygame.Color(text_color))
+                text_rect = text.get_rect(center=(x + TILE_SIZE/2, y + TILE_SIZE/2))
+                surface.blit(text, text_rect)
+
+def draw_menu(surface, font, active_ai, current_delay, show_details):
+    buttons = {
+        "Minimax": (440, 20, 250, 45),
+        "Alpha-Beta": (440, 75, 250, 45),
+        "Expectimax": (440, 130, 250, 45),
+        f"Speed: {current_delay}ms": (440, 185, 250, 45),
+        f"Details: {'ON' if show_details else 'OFF'}": (440, 240, 250, 45),
+        "Reset / Stop": (440, 295, 250, 45)
+    }
+    
+    for text, rect in buttons.items():
+        color = '#8f7a66' if active_ai != text else '#edc22e'
+        if text.startswith("Speed"): color = '#776e65'
+        if text.startswith("Details"): color = '#edc53f' if show_details else '#bbada0'
+        if text == "Reset / Stop": color = '#f65e3b'
+        
+        pygame.draw.rect(surface, pygame.Color(color), rect, border_radius=8)
+        lbl = font.render(text, True, pygame.Color('#f9f6f2'))
+        lbl_rect = lbl.get_rect(center=(rect[0] + rect[2]/2, rect[1] + rect[3]/2))
+        surface.blit(lbl, lbl_rect)
+    return buttons
+
+def draw_details_panel(surface, font_title, font_text, font_small, ai):
+    panel_x, panel_y = 710, 10
+    panel_w, panel_h = 320, 410
+    pygame.draw.rect(surface, pygame.Color(COLORS['panel_bg']), (panel_x, panel_y, panel_w, panel_h), border_radius=10)
+    
+    title = font_title.render("AI LOG & DETAILS", True, pygame.Color(COLORS['text_dark']))
+    surface.blit(title, (panel_x + 20, panel_y + 20))
+    
+    algo_text = f"Algo: {ai.current_algo if ai.current_algo else 'N/A'}"
+    algo_lbl = font_text.render(algo_text, True, pygame.Color(COLORS['text_dark']))
+    surface.blit(algo_lbl, (panel_x + 20, panel_y + 60))
+    
+    nodes_text = f"Nodes Evaluated: {ai.nodes_evaluated}"
+    nodes_lbl = font_text.render(nodes_text, True, pygame.Color(COLORS['text_dark']))
+    surface.blit(nodes_lbl, (panel_x + 20, panel_y + 95))
+    
+    pygame.draw.line(surface, pygame.Color('#cdc1b4'), (panel_x + 20, panel_y + 135), (panel_x + panel_w - 20, panel_y + 135), 2)
+    
+    y_pos = panel_y + 155
+    if not ai.move_scores:
+        wait_text = font_text.render("Waiting for AI...", True, pygame.Color('#a39688'))
+        surface.blit(wait_text, (panel_x + 20, y_pos))
+    else:
+        for move in MOVE_NAMES:
+            if move in ai.move_scores:
+                score = ai.move_scores[move]
+                is_chosen = (ai.chosen_move != -1 and MOVE_NAMES[ai.chosen_move] == move)
+                
+                color = '#edc22e' if is_chosen else '#8f7a66'
+                bg_color = '#ffffff' if is_chosen else COLORS['panel_bg']
+                
+                if is_chosen:
+                    pygame.draw.rect(surface, pygame.Color(bg_color), (panel_x + 10, y_pos - 5, panel_w - 20, 35), border_radius=5)
+                
+                text_str = f"{move}: {score:,.0f}"
+                text = font_small.render(text_str, True, pygame.Color(color))
+                surface.blit(text, (panel_x + 20, y_pos))
+                
+                if is_chosen:
+                    pick_lbl = font_small.render("<-- SELECTED", True, pygame.Color('#f65e3b'))
+                    surface.blit(pick_lbl, (panel_x + 210, y_pos))
+                
+                y_pos += 45
+
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+    virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+    pygame.display.set_caption("2048 - Minimax | Alpha-Beta | Expectimax")
+    
+    font_large = pygame.font.SysFont("segoeui, tahoma, arial", 40, bold=True)
+    font_med = pygame.font.SysFont("segoeui, tahoma, arial", 24, bold=True)
+    font_small = pygame.font.SysFont("segoeui, tahoma, arial", 20, bold=True)
+    font_xs = pygame.font.SysFont("segoeui, tahoma, arial", 18, bold=True)
+    clock = pygame.time.Clock()
+
+    game = Game2048()
+    ai = AI2048()
+    active_ai = None
+    show_details = False
+    running = True
+
+    delays = [100, 300, 500, 1000]
+    delay_idx = 2
+
+    while running:
+        virtual_surface.fill(pygame.Color(COLORS['bg']))
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.VIDEORESIZE:
+                screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                x, y = event.pos
+                scale_x = WIDTH / screen.get_width()
+                scale_y = HEIGHT / screen.get_height()
+                virt_x, virt_y = x * scale_x, y * scale_y
+
+                buttons = draw_menu(virtual_surface, font_small, active_ai, delays[delay_idx], show_details)
+                for btn_name, rect in buttons.items():
+                    bx, by, bw, bh = rect
+                    if bx <= virt_x <= bx + bw and by <= virt_y <= by + bh:
+                        if btn_name == "Reset / Stop":
+                            game = Game2048()
+                            active_ai = None
+                            ai.move_scores.clear()
+                            ai.chosen_move = -1
+                            ai.nodes_evaluated = 0
+                            ai.current_algo = ""
+                        elif btn_name.startswith("Speed"):
+                            delay_idx = (delay_idx + 1) % len(delays)
+                        elif btn_name.startswith("Details"):
+                            show_details = not show_details
+                        else:
+                            active_ai = btn_name
+                            ai.current_algo = btn_name
+
+        if active_ai and game.get_available_moves(game.board):
+            ai.nodes_evaluated = 0
+            ai.move_scores.clear()
+            
+            if active_ai == "Minimax":
+                _, ai.chosen_move = ai.minimax(game, game.board, depth=ai.DEPTH, is_maximizing=True)
+            elif active_ai == "Alpha-Beta":
+                _, ai.chosen_move = ai.alpha_beta(game, game.board, depth=ai.DEPTH, alpha=-math.inf, beta=math.inf, is_maximizing=True)
+            elif active_ai == "Expectimax":
+                _, ai.chosen_move = ai.expectimax(game, game.board, depth=ai.DEPTH, is_maximizing=True)
+            
+            if ai.chosen_move != -1:
+                game.move(ai.chosen_move)
+                
+                draw_board(virtual_surface, game, font_large)
+                draw_menu(virtual_surface, font_small, active_ai, delays[delay_idx], show_details)
+                
+                score_txt = font_small.render(f"Score: {game.score}", True, pygame.Color(COLORS['text_dark']))
+                virtual_surface.blit(score_txt, (440, 360))
+                
+                if show_details:
+                    draw_details_panel(virtual_surface, font_med, font_small, font_xs, ai)
+                
+                scaled_surface = pygame.transform.smoothscale(virtual_surface, screen.get_size())
+                screen.blit(scaled_surface, (0, 0))
+                pygame.display.flip()
+                
+                pygame.time.delay(delays[delay_idx])
+                continue
+
+        draw_board(virtual_surface, game, font_large)
+        draw_menu(virtual_surface, font_small, active_ai, delays[delay_idx], show_details)
+        
+        score_txt = font_small.render(f"Score: {game.score}", True, pygame.Color(COLORS['text_dark']))
+        virtual_surface.blit(score_txt, (440, 360))
+        
+        if show_details:
+            draw_details_panel(virtual_surface, font_med, font_small, font_xs, ai)
+
+        scaled_surface = pygame.transform.smoothscale(virtual_surface, screen.get_size())
+        screen.blit(scaled_surface, (0, 0))
+
+        pygame.display.flip()
+        clock.tick(30)
+
+    pygame.quit()
+
+if __name__ == "__main__":
+    main()
